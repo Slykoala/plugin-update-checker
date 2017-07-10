@@ -20,3 +20,4 @@ Puc_v4_Factory::addVersion('Vcs_ThemeUpdateChecker', 'Puc_v4p1_Vcs_ThemeUpdateCh
 
 Puc_v4_Factory::addVersion('GitHubApi', 'Puc_v4p1_Vcs_GitHubApi', '4.1');
 Puc_v4_Factory::addVersion('BitBucketApi', 'Puc_v4p1_Vcs_BitBucketApi', '4.1');
+Puc_v4_Factory::addVersion('GitLabApi', 'Puc_v4p1_Vcs_GitLabApi', '4.1');
