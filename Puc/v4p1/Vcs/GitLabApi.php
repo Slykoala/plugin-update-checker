@@ -21,8 +21,8 @@ if ( !class_exists('Puc_v4p1_Vcs_GitLabApi', false) ):
 
 		public function __construct($repositoryUrl, $accessToken = null) {
 			$path = @parse_url($repositoryUrl, PHP_URL_PATH);
-			if ( preg_match('@^/?(?P<username>[^/]+?)/(?P<repository>[^/#?&]+?)/?$@', $path, $matches) ) {
-				$this->repoNamespace = $matches['username'] . '/' . $matches['repository'];
+			if ( preg_match('@^/?(?P<usergroup>[^/]+?)/(?P<repository>[^/#?&]+?)/?$@', $path, $matches) ) {
+				$this->repoNamespace = $matches['usergroup'] . '/' . $matches['repository'];
 			} else {
 				throw new InvalidArgumentException('Invalid GitLab repository URL: "' . $repositoryUrl . '"');
 			}
@@ -30,6 +30,34 @@ if ( !class_exists('Puc_v4p1_Vcs_GitLabApi', false) ):
 			parent::__construct($repositoryUrl, $accessToken);
 		}
 
+		/**
+		 * Get the tag/ref specified by the "Stable tag" header in the readme.txt of a given branch.
+		 *
+		 * @param string $branch
+		 * @return null|Puc_v4p1_Vcs_Reference
+		 */
+		protected function getStableTag($branch) {
+
+			// Currently disabled as there is a bug in the GitLab API when getting a txt file the json rsponse body is not correctly formatted
+			// https://gitlab.com/gitlab-org/gitlab-ee/issues/2298
+			// Once the issue is has been resolved this line can be removed and getStableTag should work as expected. 
+			return null;
+
+			$remoteReadme = $this->getRemoteReadme($branch);
+			if ( !empty($remoteReadme['stable_tag']) ) {
+				$tag = $remoteReadme['stable_tag'];
+
+				//You can explicitly opt out of using tags by setting "Stable tag" to
+				//"trunk" or the name of the current branch.
+				if ( ($tag === $branch) || ($tag === 'trunk') ) {
+					return $this->getBranch($branch);
+				}
+
+				return $this->getTag($tag);
+			}
+
+			return null;
+		}
 
 		/**
 		 * Get the tag that looks like the highest version number.
@@ -55,6 +83,26 @@ if ( !class_exists('Puc_v4p1_Vcs_GitLabApi', false) ):
 				'name' => $tag->name,
 				'version' => ltrim($tag->name, 'v'),
 				'downloadUrl' => $this->buildArchiveDownloadUrl($tag->name),
+			));
+		}
+
+		/**
+		 * Get a specific tag.
+		 *
+		 * @param string $tagName
+		 * @return Puc_v4p1_Vcs_Reference|null
+		 */
+		public function getTag($tagName) {
+			$tag = $this->api('/refs/tags/' . $tagName);
+			if ( is_wp_error($tag) || empty($tag) ) {
+				return null;
+			}
+
+			return new Puc_v4p1_Vcs_Reference(array(
+				'name' => $tag->name,
+				'version' => ltrim($tag->name, 'v'),
+				'updated' => $tag->target->date,
+				'downloadUrl' => $this->getDownloadUrl($tag->name),
 			));
 		}
 
@@ -151,6 +199,7 @@ if ( !class_exists('Puc_v4p1_Vcs_GitLabApi', false) ):
 
 			$code = wp_remote_retrieve_response_code($response);
 			$body = wp_remote_retrieve_body($response);
+
 			if ( $code === 200 ) {
 				$document = json_decode($body);
 				return $document;
@@ -197,17 +246,6 @@ if ( !class_exists('Puc_v4p1_Vcs_GitLabApi', false) ):
 			return $url;
 		}
 
-		/**
-		 * Get a specific tag.
-		 *
-		 * @param string $tagName
-		 * @return Puc_v4p1_Vcs_Reference|null
-		 */
-		public function getTag($tagName) {
-			//The current GitLab update checker doesn't use getTag, so I didn't bother to implement it.
-			throw new LogicException('The ' . __METHOD__ . ' method is not implemented and should not be used.');
-		}
-
 		public function setAuthentication($credentials) {
 			parent::setAuthentication($credentials);
 			$this->accessToken = is_string($credentials) ? $credentials : null;
@@ -220,16 +258,18 @@ if ( !class_exists('Puc_v4p1_Vcs_GitLabApi', false) ):
 		 * @return null|Puc_v4p1_Vcs_Reference
 		 */
 		public function chooseReference($configBranch) {
+
 			$updateSource = null;
 
-			//var_dump($configBranch);exit;
+			//Check if there's a "Stable tag: 1.2.3" header that points to a valid tag.
+			$updateSource = $this->getStableTag($configBranch);
 
-			if ( $configBranch === 'master' ) {
-				//Failing that, use the tag with the highest version number.
+			//Look for version-like tags.
+			if ( !$updateSource && ($configBranch === 'master') ) {
 				$updateSource = $this->getLatestTag();
 			}
-			//Alternatively, just use the branch itself.
-			if ( empty($updateSource) ) {
+			//If all else fails, use the specified branch itself.
+			if ( !$updateSource ) {
 				$updateSource = $this->getBranch($configBranch);
 			}
 
